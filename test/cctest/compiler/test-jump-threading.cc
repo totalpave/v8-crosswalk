@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/compiler/instruction.h"
-#include "src/compiler/instruction-codes.h"
-#include "src/compiler/jump-threading.h"
+#include "src/codegen/source-position.h"
+#include "src/compiler/backend/instruction-codes.h"
+#include "src/compiler/backend/instruction.h"
+#include "src/compiler/backend/jump-threading.h"
 #include "test/cctest/cctest.h"
 
 namespace v8 {
@@ -18,7 +19,7 @@ class TestCode : public HandleAndZoneScope {
         blocks_(main_zone()),
         sequence_(main_isolate(), main_zone(), &blocks_),
         rpo_number_(RpoNumber::FromInt(0)),
-        current_(NULL) {}
+        current_(nullptr) {}
 
   ZoneVector<InstructionBlock*> blocks_;
   InstructionSequence sequence_;
@@ -28,8 +29,8 @@ class TestCode : public HandleAndZoneScope {
   int Jump(int target) {
     Start();
     InstructionOperand ops[] = {UseRpo(target)};
-    sequence_.AddInstruction(
-        Instruction::New(main_zone(), kArchJmp, 0, NULL, 1, ops, 0, NULL));
+    sequence_.AddInstruction(Instruction::New(main_zone(), kArchJmp, 0, nullptr,
+                                              1, ops, 0, nullptr));
     int pos = static_cast<int>(sequence_.instructions().size() - 1);
     End();
     return pos;
@@ -44,7 +45,7 @@ class TestCode : public HandleAndZoneScope {
     InstructionCode code = 119 | FlagsModeField::encode(kFlags_branch) |
                            FlagsConditionField::encode(kEqual);
     sequence_.AddInstruction(
-        Instruction::New(main_zone(), code, 0, NULL, 2, ops, 0, NULL));
+        Instruction::New(main_zone(), code, 0, nullptr, 2, ops, 0, nullptr));
     int pos = static_cast<int>(sequence_.instructions().size() - 1);
     End();
     return pos;
@@ -76,15 +77,19 @@ class TestCode : public HandleAndZoneScope {
   }
   void End() {
     Start();
+    int end = static_cast<int>(sequence_.instructions().size());
+    if (current_->code_start() == end) {  // Empty block.  Insert a nop.
+      sequence_.AddInstruction(Instruction::New(main_zone(), kArchNop));
+    }
     sequence_.EndBlock(current_->rpo_number());
-    current_ = NULL;
+    current_ = nullptr;
     rpo_number_ = RpoNumber::FromInt(rpo_number_.ToInt() + 1);
   }
   InstructionOperand UseRpo(int num) {
     return sequence_.AddImmediate(Constant(RpoNumber::FromInt(num)));
   }
   void Start(bool deferred = false) {
-    if (current_ == NULL) {
+    if (current_ == nullptr) {
       current_ = new (main_zone())
           InstructionBlock(main_zone(), rpo_number_, RpoNumber::Invalid(),
                            RpoNumber::Invalid(), deferred, false);
@@ -93,7 +98,7 @@ class TestCode : public HandleAndZoneScope {
     }
   }
   void Defer() {
-    CHECK(current_ == NULL);
+    CHECK_NULL(current_);
     Start(true);
   }
   void AddGapMove(int index, const InstructionOperand& from,
@@ -104,10 +109,10 @@ class TestCode : public HandleAndZoneScope {
   }
 };
 
-
-void VerifyForwarding(TestCode& code, int count, int* expected) {
-  base::AccountingAllocator allocator;
-  Zone local_zone(&allocator);
+void VerifyForwarding(TestCode& code,  // NOLINT(runtime/references)
+                      int count, int* expected) {
+  v8::internal::AccountingAllocator allocator;
+  Zone local_zone(&allocator, ZONE_NAME);
   ZoneVector<RpoNumber> result(&local_zone);
   JumpThreading::ComputeForwarding(&local_zone, result, &code.sequence_, true);
 
@@ -116,7 +121,6 @@ void VerifyForwarding(TestCode& code, int count, int* expected) {
     CHECK(expected[i] == result[i].ToInt());
   }
 }
-
 
 TEST(FwEmpty1) {
   TestCode code;
@@ -606,17 +610,18 @@ void RunPermutedDiamond(int* permutation, int size) {
 
 TEST(FwPermuted_diamond) { RunAllPermutations<4>(RunPermutedDiamond); }
 
-
-void ApplyForwarding(TestCode& code, int size, int* forward) {
+void ApplyForwarding(TestCode& code,  // NOLINT(runtime/references)
+                     int size, int* forward) {
+  code.sequence_.RecomputeAssemblyOrderForTesting();
   ZoneVector<RpoNumber> vector(code.main_zone());
   for (int i = 0; i < size; i++) {
     vector.push_back(RpoNumber::FromInt(forward[i]));
   }
-  JumpThreading::ApplyForwarding(vector, &code.sequence_);
+  JumpThreading::ApplyForwarding(code.main_zone(), vector, &code.sequence_);
 }
 
-
-void CheckJump(TestCode& code, int pos, int target) {
+void CheckJump(TestCode& code,  // NOLINT(runtime/references)
+               int pos, int target) {
   Instruction* instr = code.sequence_.InstructionAt(pos);
   CHECK_EQ(kArchJmp, instr->arch_opcode());
   CHECK_EQ(1, static_cast<int>(instr->InputCount()));
@@ -625,8 +630,8 @@ void CheckJump(TestCode& code, int pos, int target) {
   CHECK_EQ(target, code.sequence_.InputRpo(instr, 0).ToInt());
 }
 
-
-void CheckNop(TestCode& code, int pos) {
+void CheckNop(TestCode& code,  // NOLINT(runtime/references)
+              int pos) {
   Instruction* instr = code.sequence_.InstructionAt(pos);
   CHECK_EQ(kArchNop, instr->arch_opcode());
   CHECK_EQ(0, static_cast<int>(instr->InputCount()));
@@ -634,8 +639,8 @@ void CheckNop(TestCode& code, int pos) {
   CHECK_EQ(0, static_cast<int>(instr->TempCount()));
 }
 
-
-void CheckBranch(TestCode& code, int pos, int t1, int t2) {
+void CheckBranch(TestCode& code,  // NOLINT(runtime/references)
+                 int pos, int t1, int t2) {
   Instruction* instr = code.sequence_.InstructionAt(pos);
   CHECK_EQ(2, static_cast<int>(instr->InputCount()));
   CHECK_EQ(0, static_cast<int>(instr->OutputCount()));
@@ -644,14 +649,13 @@ void CheckBranch(TestCode& code, int pos, int t1, int t2) {
   CHECK_EQ(t2, code.sequence_.InputRpo(instr, 1).ToInt());
 }
 
-
-void CheckAssemblyOrder(TestCode& code, int size, int* expected) {
+void CheckAssemblyOrder(TestCode& code,  // NOLINT(runtime/references)
+                        int size, int* expected) {
   int i = 0;
   for (auto const block : code.sequence_.instruction_blocks()) {
     CHECK_EQ(expected[i++], block->ao_number().ToInt());
   }
 }
-
 
 TEST(Rewire1) {
   TestCode code;

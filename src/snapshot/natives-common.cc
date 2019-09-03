@@ -5,33 +5,22 @@
 // The common functionality when building with internal or external natives.
 
 #include "src/heap/heap.h"
-#include "src/objects-inl.h"
+#include "src/objects/objects-inl.h"
 #include "src/snapshot/natives.h"
 
 namespace v8 {
 namespace internal {
 
-template <>
-FixedArray* NativesCollection<CORE>::GetSourceCache(Heap* heap) {
-  return heap->natives_source_cache();
-}
-
-
-template <>
-FixedArray* NativesCollection<EXPERIMENTAL>::GetSourceCache(Heap* heap) {
-  return heap->experimental_natives_source_cache();
-}
-
-
-template <>
-FixedArray* NativesCollection<EXTRAS>::GetSourceCache(Heap* heap) {
-  return heap->extra_natives_source_cache();
-}
-
-
-template <>
-FixedArray* NativesCollection<EXPERIMENTAL_EXTRAS>::GetSourceCache(Heap* heap) {
-  return heap->experimental_extra_natives_source_cache();
+NativesExternalStringResource::NativesExternalStringResource(NativeType type,
+                                                             int index)
+    : type_(type), index_(index) {
+  Vector<const char> source;
+  DCHECK_LE(0, index);
+  CHECK_EQ(EXTRAS, type_);
+  DCHECK(index < ExtraNatives::GetBuiltinsCount());
+  source = ExtraNatives::GetScriptSource(index);
+  data_ = source.begin();
+  length_ = source.length();
 }
 
 }  // namespace internal

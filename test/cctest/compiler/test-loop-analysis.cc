@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/codegen/tick-counter.h"
 #include "src/compiler/access-builder.h"
 #include "src/compiler/common-operator.h"
-#include "src/compiler/graph.h"
 #include "src/compiler/graph-visualizer.h"
+#include "src/compiler/graph.h"
 #include "src/compiler/js-graph.h"
 #include "src/compiler/js-operator.h"
 #include "src/compiler/loop-analysis.h"
@@ -45,9 +46,9 @@ class LoopFinderTester : HandleAndZoneScope {
         zero(jsgraph.Int32Constant(0)),
         one(jsgraph.OneConstant()),
         half(jsgraph.Constant(0.5)),
-        self(graph.NewNode(common.Int32Constant(0xaabbccdd))),
+        self(graph.NewNode(common.Int32Constant(0xAABBCCDD))),
         dead(graph.NewNode(common.Dead())),
-        loop_tree(NULL) {
+        loop_tree(nullptr) {
     graph.SetEnd(end);
     graph.SetStart(start);
     leaf[0] = zero;
@@ -57,6 +58,7 @@ class LoopFinderTester : HandleAndZoneScope {
   }
 
   Isolate* isolate;
+  TickCounter tick_counter;
   CommonOperatorBuilder common;
   Graph graph;
   JSGraph jsgraph;
@@ -116,19 +118,19 @@ class LoopFinderTester : HandleAndZoneScope {
   }
 
   Node* Return(Node* val, Node* effect, Node* control) {
-    Node* ret = graph.NewNode(common.Return(), val, effect, control);
+    Node* zero = graph.NewNode(common.Int32Constant(0));
+    Node* ret = graph.NewNode(common.Return(), zero, val, effect, control);
     end->ReplaceInput(0, ret);
     return ret;
   }
 
   LoopTree* GetLoopTree() {
-    if (loop_tree == NULL) {
+    if (loop_tree == nullptr) {
       if (FLAG_trace_turbo_graph) {
-        OFStream os(stdout);
-        os << AsRPO(graph);
+        StdoutStream{} << AsRPO(graph);
       }
-      Zone zone(main_isolate()->allocator());
-      loop_tree = LoopFinder::BuildLoopTree(&graph, &zone);
+      Zone zone(main_isolate()->allocator(), ZONE_NAME);
+      loop_tree = LoopFinder::BuildLoopTree(&graph, &tick_counter, &zone);
     }
     return loop_tree;
   }
@@ -167,7 +169,7 @@ class LoopFinderTester : HandleAndZoneScope {
       CHECK(loop);
       // Check parentage.
       LoopTree::Loop* parent =
-          i == 0 ? NULL : tree->ContainingLoop(chain[i - 1]);
+          i == 0 ? nullptr : tree->ContainingLoop(chain[i - 1]);
       CHECK_EQ(parent, loop->parent());
       for (int j = i - 1; j >= 0; j--) {
         // This loop should be nested inside all the outer loops.
@@ -199,7 +201,7 @@ struct While {
   }
 
   void chain(Node* control) { loop->ReplaceInput(0, control); }
-  void nest(While& that) {
+  void nest(While& that) {  // NOLINT(runtime/references)
     that.loop->ReplaceInput(1, exit);
     this->loop->ReplaceInput(0, that.if_true);
   }
@@ -212,7 +214,8 @@ struct Counter {
   Node* phi;
   Node* add;
 
-  Counter(While& w, int32_t b, int32_t k)
+  Counter(While& w,  // NOLINT(runtime/references)
+          int32_t b, int32_t k)
       : base(w.t.jsgraph.Int32Constant(b)), inc(w.t.jsgraph.Int32Constant(k)) {
     Build(w);
   }
@@ -233,7 +236,7 @@ struct StoreLoop {
   Node* phi;
   Node* store;
 
-  explicit StoreLoop(While& w)
+  explicit StoreLoop(While& w)  // NOLINT(runtime/references)
       : base(w.t.graph.start()), val(w.t.jsgraph.Int32Constant(13)) {
     Build(w);
   }
@@ -696,7 +699,8 @@ TEST(LaEdgeMatrix1) {
         Node* if_true = t.graph.NewNode(t.common.IfTrue(), branch);
         Node* exit = t.graph.NewNode(t.common.IfFalse(), branch);
         loop->ReplaceInput(1, if_true);
-        Node* ret = t.graph.NewNode(t.common.Return(), p3, t.start, exit);
+        Node* zero = t.graph.NewNode(t.common.Int32Constant(0));
+        Node* ret = t.graph.NewNode(t.common.Return(), zero, p3, t.start, exit);
         t.graph.SetEnd(ret);
 
         Node* choices[] = {p1, phi, cond};
@@ -743,7 +747,9 @@ void RunEdgeMatrix2(int i) {
       loop2->ReplaceInput(1, if_true2);
       loop1->ReplaceInput(1, exit2);
 
-      Node* ret = t.graph.NewNode(t.common.Return(), phi1, t.start, exit1);
+      Node* zero = t.graph.NewNode(t.common.Int32Constant(0));
+      Node* ret =
+          t.graph.NewNode(t.common.Return(), zero, phi1, t.start, exit1);
       t.graph.SetEnd(ret);
 
       Node* choices[] = {p1, phi1, cond1, phi2, cond2};
@@ -830,7 +836,8 @@ void RunEdgeMatrix3(int c1a, int c1b, int c1c,    // line break
   loop2->ReplaceInput(1, exit3);
   loop1->ReplaceInput(1, exit2);
 
-  Node* ret = t.graph.NewNode(t.common.Return(), phi1, t.start, exit1);
+  Node* zero = t.graph.NewNode(t.common.Int32Constant(0));
+  Node* ret = t.graph.NewNode(t.common.Return(), zero, phi1, t.start, exit1);
   t.graph.SetEnd(ret);
 
   // Mutate the graph according to the edge choices.
@@ -943,7 +950,8 @@ static void RunManyChainedLoops_i(int count) {
     last = exit;
   }
 
-  Node* ret = t.graph.NewNode(t.common.Return(), t.p0, t.start, last);
+  Node* zero = t.graph.NewNode(t.common.Int32Constant(0));
+  Node* ret = t.graph.NewNode(t.common.Return(), zero, t.p0, t.start, last);
   t.graph.SetEnd(ret);
 
   // Verify loops.
@@ -962,6 +970,7 @@ static void RunManyNestedLoops_i(int count) {
   Node* entry = t.start;
 
   // Build loops.
+  Node* zero = t.graph.NewNode(t.common.Int32Constant(0));
   for (int i = 0; i < count; i++) {
     Node* loop = t.graph.NewNode(t.common.Loop(2), entry, t.start);
     Node* phi = t.graph.NewNode(t.common.Phi(MachineRepresentation::kWord32, 2),
@@ -981,7 +990,7 @@ static void RunManyNestedLoops_i(int count) {
       outer->ReplaceInput(1, exit);
     } else {
       // outer loop.
-      Node* ret = t.graph.NewNode(t.common.Return(), t.p0, t.start, exit);
+      Node* ret = t.graph.NewNode(t.common.Return(), zero, t.p0, t.start, exit);
       t.graph.SetEnd(ret);
     }
     outer = loop;

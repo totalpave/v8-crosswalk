@@ -109,9 +109,10 @@ local function MakeClangCommandLine(
       .. " -Xclang -triple -Xclang " .. triple
       .. " -D" .. arch_define
       .. " -DENABLE_DEBUGGER_SUPPORT"
-      .. " -DV8_I18N_SUPPORT"
+      .. " -DV8_INTL_SUPPORT"
       .. " -I./"
       .. " -Iinclude/"
+      .. " -Iout/Release/gen"
       .. " -Ithird_party/icu/source/common"
       .. " -Ithird_party/icu/source/i18n"
       .. " " .. arch_options
@@ -181,29 +182,35 @@ function InvokeClangPluginForEachFile(filenames, cfg, func)
 end
 
 -------------------------------------------------------------------------------
--- GYP file parsing
 
-local function ParseGYPFile()
+local function ParseGNFile(for_test)
    local result = {}
-   local gyp_files = {
-       { "src/v8.gyp",             "'([^']-%.cc)'",      "src/"         },
-       { "test/cctest/cctest.gyp", "'(test-[^']-%.cc)'", "test/cctest/" }
-   }
+   local gn_files
+   if for_test then
+      gn_files = {
+         { "tools/gcmole/GCMOLE.gn",             '"([^"]-%.cc)"',      ""         }
+      }
+   else
+      gn_files = {
+         { "BUILD.gn",             '"([^"]-%.cc)"',      ""         },
+         { "test/cctest/BUILD.gn", '"(test-[^"]-%.cc)"', "test/cctest/" }
+      }
+   end
 
-   for i = 1, #gyp_files do
-      local filename = gyp_files[i][1]
-      local pattern = gyp_files[i][2]
-      local prefix = gyp_files[i][3]
-      local gyp_file = assert(io.open(filename), "failed to open GYP file")
-      local gyp = gyp_file:read('*a')
+   for i = 1, #gn_files do
+      local filename = gn_files[i][1]
+      local pattern = gn_files[i][2]
+      local prefix = gn_files[i][3]
+      local gn_file = assert(io.open(filename), "failed to open GN file")
+      local gn = gn_file:read('*a')
       for condition, sources in
-         gyp:gmatch "'sources': %[.-### gcmole%((.-)%) ###(.-)%]" do
+         gn:gmatch "### gcmole%((.-)%) ###(.-)%]" do
          if result[condition] == nil then result[condition] = {} end
          for file in sources:gmatch(pattern) do
             table.insert(result[condition], prefix .. file)
          end
       end
-      gyp_file:close()
+      gn_file:close()
    end
 
    return result
@@ -230,13 +237,22 @@ local function BuildFileList(sources, props)
    return list
 end
 
-local sources = ParseGYPFile()
+
+local gn_sources = ParseGNFile(false)
+local gn_test_sources = ParseGNFile(true)
 
 local function FilesForArch(arch)
-   return BuildFileList(sources, { os = 'linux',
-                                   arch = arch,
-                                   mode = 'debug',
-                                   simulator = ''})
+   return BuildFileList(gn_sources, { os = 'linux',
+                                      arch = arch,
+                                      mode = 'debug',
+                                      simulator = ''})
+end
+
+local function FilesForTest(arch)
+   return BuildFileList(gn_test_sources, { os = 'linux',
+                                      arch = arch,
+                                      mode = 'debug',
+                                      simulator = ''})
 end
 
 local mtConfig = {}
@@ -274,18 +290,17 @@ local gc, gc_caused, funcs
 
 local WHITELIST = {
    -- The following functions call CEntryStub which is always present.
-   "MacroAssembler.*CallExternalReference",
    "MacroAssembler.*CallRuntime",
    "CompileCallLoadPropertyWithInterceptor",
    "CallIC.*GenerateMiss",
 
-   -- DirectCEntryStub is a special stub used on ARM. 
+   -- DirectCEntryStub is a special stub used on ARM.
    -- It is pinned and always present.
-   "DirectCEntryStub.*GenerateCall",  
+   "DirectCEntryStub.*GenerateCall",
 
-   -- TODO GCMole currently is sensitive enough to understand that certain 
-   --      functions only cause GC and return Failure simulataneously. 
-   --      Callsites of such functions are safe as long as they are properly 
+   -- TODO GCMole currently is sensitive enough to understand that certain
+   --      functions only cause GC and return Failure simulataneously.
+   --      Callsites of such functions are safe as long as they are properly
    --      check return value and propagate the Failure to the caller.
    --      It should be possible to extend GCMole to understand this.
    "Heap.*AllocateFunctionPrototype",
@@ -393,8 +408,13 @@ end
 --------------------------------------------------------------------------------
 -- Analysis
 
-local function CheckCorrectnessForArch(arch)
-   local files = FilesForArch(arch)
+local function CheckCorrectnessForArch(arch, for_test)
+   local files
+   if for_test then
+      files = FilesForTest(arch)
+   else
+      files = FilesForArch(arch)
+   end
    local cfg = ARCHITECTURES[arch]
 
    if not FLAGS.reuse_gcsuspects then
@@ -403,6 +423,7 @@ local function CheckCorrectnessForArch(arch)
 
    local processed_files = 0
    local errors_found = false
+   local output = ""
    local function SearchForErrors(filename, lines)
       processed_files = processed_files + 1
       for l in lines do
@@ -410,7 +431,11 @@ local function CheckCorrectnessForArch(arch)
             l:match "^[^:]+:%d+:%d+:" or
             l:match "error" or
             l:match "warning"
-         print(l)
+         if for_test then
+            output = output.."\n"..l
+         else
+            print(l)
+         end
       end
    end
 
@@ -427,17 +452,33 @@ local function CheckCorrectnessForArch(arch)
        processed_files,
        errors_found and "Errors found" or "No errors found")
 
-   return errors_found
+   return errors_found, output
 end
 
-local function SafeCheckCorrectnessForArch(arch)
-   local status, errors = pcall(CheckCorrectnessForArch, arch)
+local function SafeCheckCorrectnessForArch(arch, for_test)
+   local status, errors, output = pcall(CheckCorrectnessForArch, arch, for_test)
    if not status then
       print(string.format("There was an error: %s", errors))
       errors = true
    end
-   return errors
+   return errors, output
 end
+
+local function TestRun()
+   local errors, output = SafeCheckCorrectnessForArch('x64', true)
+
+   local filename = "tools/gcmole/test-expectations.txt"
+   local exp_file = assert(io.open(filename), "failed to open test expectations file")
+   local expectations = exp_file:read('*all')
+
+   if output ~= expectations then
+      log("** Output mismatch from running tests. Please run them manually.")
+   else
+      log("** Tests ran successfully")
+   end
+end
+
+TestRun()
 
 local errors = false
 
@@ -446,7 +487,7 @@ for _, arch in ipairs(ARCHS) do
       error ("Unknown arch: " .. arch)
    end
 
-   errors = SafeCheckCorrectnessForArch(arch, report) or errors
+   errors = SafeCheckCorrectnessForArch(arch, false) or errors
 end
 
 os.exit(errors and 1 or 0)

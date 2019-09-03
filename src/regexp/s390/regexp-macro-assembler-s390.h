@@ -2,19 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef V8_S390_REGEXP_MACRO_ASSEMBLER_S390_H_
-#define V8_S390_REGEXP_MACRO_ASSEMBLER_S390_H_
+#ifndef V8_REGEXP_S390_REGEXP_MACRO_ASSEMBLER_S390_H_
+#define V8_REGEXP_S390_REGEXP_MACRO_ASSEMBLER_S390_H_
 
-#include "src/macro-assembler.h"
+#include "src/codegen/macro-assembler.h"
+#include "src/codegen/s390/assembler-s390.h"
 #include "src/regexp/regexp-macro-assembler.h"
-#include "src/s390/assembler-s390.h"
-#include "src/s390/frames-s390.h"
 
 namespace v8 {
 namespace internal {
 
-#ifndef V8_INTERPRETED_REGEXP
-class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
+class V8_EXPORT_PRIVATE RegExpMacroAssemblerS390
+    : public NativeRegExpMacroAssembler {
  public:
   RegExpMacroAssemblerS390(Isolate* isolate, Zone* zone, Mode mode,
                            int registers_to_save);
@@ -24,7 +23,7 @@ class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
   virtual void AdvanceRegister(int reg, int by);
   virtual void Backtrack();
   virtual void Bind(Label* label);
-  virtual void CheckAtStart(Label* on_at_start);
+  virtual void CheckAtStart(int cp_offset, Label* on_at_start);
   virtual void CheckCharacter(unsigned c, Label* on_equal);
   virtual void CheckCharacterAfterAnd(unsigned c, unsigned mask,
                                       Label* on_equal);
@@ -60,9 +59,9 @@ class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
   virtual void IfRegisterLT(int reg, int comparand, Label* if_lt);
   virtual void IfRegisterEqPos(int reg, Label* if_eq);
   virtual IrregexpImplementation Implementation();
-  virtual void LoadCurrentCharacter(int cp_offset, Label* on_end_of_input,
-                                    bool check_bounds = true,
-                                    int characters = 1);
+  virtual void LoadCurrentCharacterImpl(int cp_offset, Label* on_end_of_input,
+                                        bool check_bounds, int characters,
+                                        int eats_at_least);
   virtual void PopCurrentPosition();
   virtual void PopRegister(int register_index);
   virtual void PushBacktrack(Label* label);
@@ -77,12 +76,12 @@ class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
   virtual void WriteCurrentPositionToRegister(int reg, int cp_offset);
   virtual void ClearRegisters(int reg_from, int reg_to);
   virtual void WriteStackPointerToRegister(int reg);
-  virtual bool CanReadUnaligned();
 
   // Called from RegExp if the stack-guard is triggered.
   // If the code object is relocated, the return address is fixed before
   // returning.
-  static int CheckStackGuardState(Address* return_address, Code* re_code,
+  // {raw_code} is an Address because this is called via ExternalReference.
+  static int CheckStackGuardState(Address* return_address, Address raw_code,
                                   Address re_frame);
 
  private:
@@ -98,8 +97,7 @@ class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
   static const int kCaptureArraySize = kCallerFrame;
   static const int kStackAreaBase = kCallerFrame + kPointerSize;
   // kDirectCall again
-  static const int kSecondaryReturnAddress = kStackAreaBase + 2 * kPointerSize;
-  static const int kIsolate = kSecondaryReturnAddress + kPointerSize;
+  static const int kIsolate = kStackAreaBase + 2 * kPointerSize;
 
   // Below the frame pointer.
   // Register parameters stored by setup code.
@@ -119,7 +117,7 @@ class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
   static const int kRegisterZero = kStringStartMinusOne - kPointerSize;
 
   // Initial size of code buffer.
-  static const size_t kRegExpCodeSize = 1024;
+  static const int kRegExpCodeSize = 1024;
 
   // Load a number of characters at the given offset from the
   // current position, into the current-character register.
@@ -163,7 +161,7 @@ class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
   inline int char_size() { return static_cast<int>(mode_); }
 
   // Equivalent to a conditional branch to the label, unless the label
-  // is NULL, in which case it is a conditional Backtrack.
+  // is nullptr, in which case it is a conditional Backtrack.
   void BranchOrBacktrack(Condition condition, Label* to, CRegister cr = cr7);
 
   // Call and return internally in the generated code in a way that
@@ -209,8 +207,7 @@ class RegExpMacroAssemblerS390 : public NativeRegExpMacroAssembler {
 const RegList kRegExpCalleeSaved =
     1 << 6 | 1 << 7 | 1 << 8 | 1 << 9 | 1 << 10 | 1 << 11 | 1 << 13;
 
-#endif  // V8_INTERPRETED_REGEXP
 }  // namespace internal
 }  // namespace v8
 
-#endif  // V8_S390_REGEXP_MACRO_ASSEMBLER_S390_H_
+#endif  // V8_REGEXP_S390_REGEXP_MACRO_ASSEMBLER_S390_H_

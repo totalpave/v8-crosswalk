@@ -2,11 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --ignition-generators --harmony-do-expressions
 // Flags: --allow-natives-syntax
 
 
 function MaybeOptimizeOrDeoptimize(f) {
+  %PrepareFunctionForOptimization(f);
   let x = Math.random();  // --random-seed makes this deterministic
   if (x <= 0.33) {
     %OptimizeFunctionOnNextCall(f);
@@ -430,14 +430,6 @@ function Throw(generator, ...args) {
 }
 
 {
-  function* foo() { yield 2; (do {yield 3}) + 42; yield 4 }
-  g = foo();
-  assertEquals({value: 2, done: false}, Next(g));
-  assertEquals({value: 3, done: false}, Next(g));
-  assertEquals({value: 4, done: false}, Next(g));
-}
-
-{
   function* foo() { yield 2; return (yield 3) + 42; yield 4 }
   g = foo();
   assertEquals({value: 2, done: false}, Next(g));
@@ -647,4 +639,16 @@ function Throw(generator, ...args) {
   g = foo();
   assertEquals({value: 42, done: false}, Next(g));
   assertEquals({value: 23, done: true}, Return(g, 23));
+}
+
+{
+  let iterable = {
+    [Symbol.iterator]() {
+      return { next() { return {} } };
+    }
+  };
+  let foo = function*() { yield* iterable };
+  g = foo();
+  g.next();
+  assertThrows(() => Throw(g), TypeError);
 }

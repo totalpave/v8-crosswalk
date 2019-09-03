@@ -11,10 +11,12 @@ namespace v8 {
 namespace internal {
 namespace compiler {
 
-class RedundancyElimination final : public AdvancedReducer {
+class V8_EXPORT_PRIVATE RedundancyElimination final : public AdvancedReducer {
  public:
   RedundancyElimination(Editor* editor, Zone* zone);
   ~RedundancyElimination() final;
+
+  const char* reducer_name() const override { return "RedundancyElimination"; }
 
   Reduction Reduce(Node* node) final;
 
@@ -29,10 +31,12 @@ class RedundancyElimination final : public AdvancedReducer {
    public:
     static EffectPathChecks* Copy(Zone* zone, EffectPathChecks const* checks);
     static EffectPathChecks const* Empty(Zone* zone);
+    bool Equals(EffectPathChecks const* that) const;
     void Merge(EffectPathChecks const* that);
 
     EffectPathChecks const* AddCheck(Zone* zone, Node* node) const;
     Node* LookupCheck(Node* node) const;
+    Node* LookupBoundsCheckFor(Node* node) const;
 
    private:
     EffectPathChecks(Check* head, size_t size) : head_(head), size_(size) {}
@@ -55,6 +59,8 @@ class RedundancyElimination final : public AdvancedReducer {
 
   Reduction ReduceCheckNode(Node* node);
   Reduction ReduceEffectPhi(Node* node);
+  Reduction ReduceSpeculativeNumberComparison(Node* node);
+  Reduction ReduceSpeculativeNumberOperation(Node* node);
   Reduction ReduceStart(Node* node);
   Reduction ReduceOtherNode(Node* node);
 
